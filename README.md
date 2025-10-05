@@ -4,7 +4,7 @@
 
 Implementar el proceso de empaquetado y serialización de datos de un sensor, cumpliendo con una especificación de formato y una restricción de tamaño.
 
-## Archivos del Proyect
+## Archivos del Proyecto
 
 *   `generador_inversor.py`: **NO MODIFICAR**. Contiene la función `generar_datos_inversor()` que simula el hardware.
 *   `autoevaluador.py`: **NO MODIFICAR**. Contiene la función `autoevaluador()` que permite la autoverificación del mensaje

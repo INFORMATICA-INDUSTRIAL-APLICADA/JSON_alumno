@@ -1,0 +1,1142 @@
+\section{Intercambio de Datos Estructurados: JSON}
+
+En el entorno industrial moderno, es fundamental que diferentes sistemas, desde sensores en planta hasta servidores en la nube, puedan intercambiar información compleja de manera fiable y eficiente. El desafío es complejo: ¿cómo empaquetamos una estructura de datos de un programa para enviarla a través de una red y que otro programa, posiblemente escrito en un lenguaje diferente, pueda entenderla sin ambigüedades?
+
+Para resolver este problema, necesitamos una solución de dos partes: un formato de datos estándar y herramientas en cada lenguaje de programación implicado que permitan codificar (origen) y decodificar (destino) información en dicho formato.
+
+En este tema, abordaremos esta solución integral desde dos perspectivas clave:
+\begin{enumerate}
+    \item Primero, estudiaremos el estándar \textit{de facto} para el intercambio de datos en la web y los sistemas modernos: el formato \textbf{JSON}.
+    \item Segundo, aplicaremos la herramienta fundamental en \textbf{Python} para trabajar con esta información: los \textbf{diccionarios}. Aunque nuestra elección es Python, el concepto de mapear JSON a una estructura de clave-valor nativa es común a casi todos los lenguajes (como \texttt{std::map} en C++ o los objetos en JavaScript).
+
+\end{enumerate}
+
+\subsection{UTF-8}
+
+Para poder enviar texto a través de una red, todo carácter debe convertirse en bytes. Esto requiere una \textbf{codificación de caracteres}: un diccionario que asocie cada carácter con uno o varios bytes. Antes de entender UTF-8, conviene repasar brevemente la historia.
+
+\subsubsection{ASCII: el punto de partida}
+
+El estándar \textbf{ASCII} (\textit{American Standard Code for Information Interchange}), desarrollado en los años 60, fue la primera codificación ampliamente adoptada. Usando \textbf{7 bits} (valores 0--127), define 128 caracteres: las 26 letras del alfabeto inglés en mayúsculas y minúsculas, los dígitos del 0 al 9, signos de puntuación y algunos caracteres de control (salto de línea, tabulación, etc.).
+
+El problema es evidente: 128 caracteres son suficientes para escribir en inglés, pero dejan fuera la \texttt{ñ}, la \texttt{á}, la \texttt{ü}, el \texttt{€}, los caracteres chinos, los árabes y un largo etcétera.
+
+\subsubsection{Unicode: un código para cada carácter del mundo}
+
+Para resolver esta limitación nació \textbf{Unicode}, un estándar universal mantenido por el \textit{Unicode Consortium}. Su objetivo es simple pero ambicioso: asignar un número único, llamado \textbf{punto de código} (\textit{code point}), a \textbf{cada carácter de todos los sistemas de escritura del mundo}, más símbolos matemáticos, emoticonos, etc.
+
+Los puntos de código se escriben con la notación \texttt{U+XXXX} (en hexadecimal). Algunos ejemplos:
+\begin{center}
+\begin{tabular}{ccc}
+\toprule
+\textbf{Carácter} & \textbf{Punto de código} & \textbf{Descripción} \\
+\midrule
+\texttt{A}  & \texttt{U+0041} & Letra latina mayúscula A \\
+\texttt{ñ}  & \texttt{U+00F1} & Letra latina eñe \\
+\texttt{€}  & \texttt{U+20AC} & Signo del euro \\
+\faSmile[regular] & \texttt{U+1F600} & Emoji cara sonriente \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Unicode actualmente define más de 140\,000 caracteres y tiene espacio para más de un millón. Sin embargo, \textbf{Unicode no especifica cómo se almacenan esos números en bytes}: para eso existen las \textbf{codificaciones Unicode}, siendo UTF-8 la más importante.
+
+\subsubsection{UTF-8: codificación de longitud variable}
+
+\textbf{UTF-8} (\textit{Unicode Transformation Format, 8-bit}) es la codificación que convierte los puntos de código de Unicode en secuencias de bytes. Su clave es que es de \textbf{longitud variable}: no todos los caracteres ocupan el mismo número de bytes.
+
+\begin{center}
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bytes} & \textbf{Rango de puntos de código} & \textbf{Ejemplos} \\
+\midrule
+1 & \texttt{U+0000} -- \texttt{U+007F} & \texttt{A}, \texttt{0}, \texttt{\{}, \texttt{"} \\
+2 & \texttt{U+0080} -- \texttt{U+07FF} & \texttt{á}, \texttt{ñ}, \texttt{ü}, \texttt{ß} \\
+3 & \texttt{U+0800} -- \texttt{U+FFFF} & \texttt{€}, caracteres chinos, árabes \\
+4 & \texttt{U+10000} -- \texttt{U+10FFFF} & Emojis, caracteres históricos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Esta característica le confiere dos ventajas fundamentales:
+
+\begin{enumerate}
+    \item \textbf{Compatibilidad total con ASCII}: los primeros 128 puntos de código de Unicode coinciden con ASCII y se codifican exactamente igual, en un solo byte. Cualquier texto ASCII válido es automáticamente texto UTF-8 válido.
+    \item \textbf{Universalidad}: permite representar cualquier carácter de cualquier idioma sin ambigüedades.
+\end{enumerate}
+
+\begin{note}
+UTF-8 no es la única codificación Unicode. \textbf{UTF-16} y \textbf{UTF-32} también existen, pero usan mínimo 2 y 4 bytes por carácter respectivamente, lo que los hace ineficientes para texto mayoritariamente en inglés. UTF-8 domina en internet y en todos los sistemas modernos de comunicación.
+\end{note}
+
+
+\subsection{El problema: la comunicación entre sistemas}
+
+Imagina que dos programas, escritos por diferentes personas en diferentes lenguajes, necesitan \textit{hablar} entre sí. Por ejemplo, una aplicación Python necesita pedirle una lista de productos a un servidor en la web.
+
+\begin{center}
+\begin{tikzpicture}[node distance=0.5cm and 2cm]
+  \node[box=blue] (python) {Aplicación Python};
+  \node[box=green, right=of python] (server) {Servidor Web};
+  \draw[arrow=black] (python.east) -- (server.west) node[midway, above] {\tiny(petición HTTP)};
+  \draw[arrow=black] (server.west) -- (python.east) node[midway, below] {\tiny(respuesta)};
+\end{tikzpicture}
+\end{center}
+
+De la misma forma, en un contexto industrial, un sensor de temperatura en un motor debe enviar sus mediciones a un sistema central para su monitoreo. El sensor no solo envía el valor (ej. 85.5), sino también la unidad (\emph{Celsius}), una marca de tiempo para saber cuándo se tomó la medida y, muy importante, un identificador único del sensor para saber de dónde viene esa lectura.
+
+\begin{center}
+\begin{tikzpicture}[node distance=0.5cm and 2cm]
+  \node[box=red] (sensor) {Sensor en Motor};
+  \node[box=gray, right=of sensor] (system) {Sistema Central};
+  \draw[arrow=black] (sensor.east) -- (system.west) node[midway, above] {\tiny(mensaje)};
+\end{tikzpicture}
+\end{center}
+
+En todos estos casos, nos enfrentamos al mismo desafío: tenemos una estructura de datos compleja en la memoria del dispositivo de origen y necesitamos enviarla a través de un medio, la red, que fundamentalmente solo sabe transportar un \textbf{flujo lineal de bytes}.
+
+\subsubsection{La serialización}
+Para poder enviar esos datos, primero debemos convertirlos a ese flujo de bytes. A este proceso de \textit{empaquetar} la información para su transporte se le conoce como \textbf{serialización}.
+
+La forma en que se realiza esta conversión depende del formato de datos elegido.
+\begin{itemize}
+    \item En los \textbf{formatos binarios}, la estructura de datos se suele convertir directamente a una secuencia de bytes optimizada para máquinas.
+    \item En los \textbf{formatos basados en texto} como JSON, el proceso consta de dos fases claras:
+    \begin{itemize}
+        \item \textbf{Serialización Lógica}: se convierte la estructura de datos a una cadena de texto que sigue las reglas del formato.
+        \item \textbf{Codificación de Caracteres}: dicha cadena de texto se convierte en el flujo final de bytes usando un estándar de codificación, como UTF-8.
+    \end{itemize}
+\end{itemize}
+
+Aunque la codificación es técnicamente el último paso de la serialización para formatos de texto, es fundamental entenderla como una fase separada para garantizar la correcta interoperabilidad entre sistemas.
+
+Por lo tanto, para que la comunicación funcione, necesitamos dos componentes que trabajan juntos:
+\begin{enumerate}
+    \item Un \textbf{formato de datos} estandarizado.
+    \item Bibliotecas de \textbf{serialización} (origen) y \textbf{deserialización} (destino) que sepan interpretar ese formato para empaquetar y desempaquetar los datos.
+\end{enumerate}
+
+
+\subsubsection{La elección del formato: Legibilidad vs. Eficiencia (IT vs. OT)}
+En las comunicaciones industriales modernas, nos encontramos con dos mundos que convergen: el de las \textbf{tecnologías de la información} (IT) y el de las \textbf{tecnologías operativas} (OT). Los sistemas IT (como las bases de datos en la nube, paneles de control web, o sistemas de planificación de recursos empresariales) necesitan intercambiar datos con los sistemas OT (los sensores, actuadores, PLCs y sistemas SCADA en la planta de producción).
+
+Esta convergencia nos obliga a entender dos familias de formatos de datos, cada una con prioridades distintas. La elección entre ellas depende del caso de uso específico: ¿buscamos interoperabilidad y facilidad de depuración?, ¿eficiencia y rendimiento máximos?
+
+Para que la comunicación industrial funcione, un formato de datos debe cumplir con ciertos requisitos. Sin embargo, existe un compromiso fundamental entre la legibilidad humana y la eficiencia computacional.
+
+Las características clave de un buen formato de datos industrial son:
+\begin{enumerate}
+\item \textbf{Estructurado}: Capaz de representar datos complejos, ya sea una simple lectura de sensor o el estado completo de una máquina.
+\item \textbf{Universal}: Independiente del fabricante del hardware o del lenguaje de programación, para garantizar la interoperabilidad.
+\item \textbf{Eficiente}: Esta es la característica más crítica y variable. Dependiendo del contexto, la eficiencia puede significar:
+\begin{itemize}
+\item \textbf{Eficiencia para el desarrollador (Legibilidad)}: Cuando los datos se intercambian con sistemas web o se depuran, se usan \textbf{formatos de texto}. Son más verbosos, pero fáciles de leer y entender.
+\item \textbf{Eficiencia para la red y la máquina (Compacidad)}: En la comunicación de alta velocidad entre máquinas o con dispositivos de bajos recursos, se usan \textbf{formatos binarios}. Sacrifican la legibilidad humana para obtener el mínimo tamaño y la máxima velocidad de procesamiento.
+\end{itemize}
+\end{enumerate}
+
+\subsection{La evolución de los formatos de texto: de XML a JSON}
+Dado este compromiso, en este tema nos centraremos en la primera categoría: los formatos de texto. Son la base para la integración de sistemas OT con el mundo IT y el pilar del llamado \textit{Industrial Internet of Things} (IIoT). Para entender por qué JSON se ha convertido en el estándar de facto en este ámbito, es útil analizar muy brevemente la evolución histórica de sus principales alternativas:
+
+\begin{itemize}
+  \item \textbf{XML (eXtensible Markup Language)}
+  \item \textbf{CSV (Comma-Separated Values)}
+\end{itemize}
+\newpage
+\subsubsection*{XML (eXtensible Markup Language)}
+Durante muchos años, XML fue el estándar de facto en el mundo empresarial y en las primeras APIs web. Es muy potente y estricto, usando un sistema de etiquetas de apertura y cierre, similar a HTML.
+
+\textit{Ejemplo de datos de un sensor en XML:}
+\begin{lstlisting}[language=XML]
+<sensor>
+  <id>TEMP-MOTOR-01A</id>
+  <valor>85.5</valor>
+  <unidad>Celsius</unidad>
+</sensor>
+\end{lstlisting}
+
+Como puedes ver, es muy descriptivo, pero también muy verboso (ocupa mucho espacio en relación a la información que transmite).
+
+\subsubsection*{CSV (Comma-Separated Values)}
+Para datos tabulares simples, como los de una hoja de cálculo, el formato CSV es extremadamente común. Es muy ligero: simplemente separa cada valor con una coma.
+
+\textit{Ejemplo del mismo sensor en CSV:}
+\begin{lstlisting}
+TEMP-MOTOR-01A,85.5,Celsius
+\end{lstlisting}
+
+\subsubsection*{JSON}
+En la era moderna de las APIs web y el IoT, un formato ha emergido como el claro ganador por su equilibrio perfecto entre legibilidad y eficiencia: \textbf{JSON}.
+
+\textit{Ejemplo del mismo sensor en JSON:}
+\begin{lstlisting}[language=json]
+{
+  "id": "TEMP-MOTOR-01A",
+  "valor": 85.5,
+  "unidad": "Celsius"
+}
+\end{lstlisting}
+
+El problema del formato CSV visto anteriormente es que no es autodescriptivo. Si bien se puede añadir una fila de cabecera para dar contexto, como es habitual en \textbf{archivos completos} donde se trabaja con \textbf{lotes} de datos, esta solución no es ideal para el envío continuo de mensajes individuales (\textit{streaming}), donde cada mensaje debe ser \textbf{autocontenido}.
+
+\textit{Ejemplo de sensor en CSV con cabecera:}
+\begin{lstlisting}
+id,valor,unidad
+TEMP-MOTOR-01A,85.5,Celsius
+\end{lstlisting}
+
+Formatos autodescriptivos como \textbf{JSON} y \textbf{XML} ofrecen ventajas cruciales sobre un formato plano como CSV:
+\begin{enumerate}
+    \item \textbf{Flexibilidad}: es fácil añadir nuevos campos a un mensaje sin romper los sistemas receptores que no los esperan.
+    \item \textbf{Estructura}: permiten representar de forma natural datos complejos y anidados.
+\end{enumerate}
+
+Entre estas opciones, \textbf{JSON} consigue ser casi tan descriptivo como \textbf{XML} pero mucho menos verboso. Por ser el estándar de facto en el desarrollo web, aplicaciones móviles y sistemas IoT, dedicaremos el resto del tema a entender en profundidad el formato JSON y cómo trabajar con él.
+
+\subsection{¿Qué es JSON?}
+
+\textbf{JSON} son las siglas de \textbf{J}ava\textbf{S}cript \textbf{O}bject \textbf{N}otation. A pesar de su nombre, es un formato de texto completamente independiente del lenguaje \textbf{JavaScript}.
+
+En esencia, un \textbf{JSON} no es más que un \textbf{archivo de texto} o una \textbf{cadena de texto en memoria} con \textbf{reglas muy estrictas} sobre cómo escribir datos. Una de las reglas más importantes, definida por el estándar, es que este texto \textbf{debe estar codificado en UTF-8}. Esto garantiza que pueda representar caracteres de cualquier idioma del mundo (\texttt{ñ}, \texttt{€}, etc.) de forma universal y sin ambigüedades.
+
+
+La idea central de JSON es la de organizar la información en pares, donde a cada \textbf{etiqueta}, (también llamada \textbf{clave} o \textbf{key} en inglés), se le asocia un \textbf{valor}. Piensa en una ficha de contacto:
+\begin{itemize}
+    \item \textbf{Etiqueta:} \textit{Nombre}, \textbf{Valor:} \textit{Ana}
+    \item \textbf{Etiqueta:} \textit{Edad}, \textbf{Valor:} \textit{30}
+    \item \textbf{Etiqueta:} \textit{Tiene Carnet}, \textbf{Valor:} \textit{Si}
+\end{itemize}
+\textbf{JSON} nos permite escribir esta información de una manera estandarizada.
+
+JSON tiene dos formas principales de estructurar datos: \textbf{Objetos} y \textbf{Arrays}.
+
+
+
+\subsubsection{Objetos JSON (\texttt{\{\}})}
+Un \textbf{objeto JSON} es una colección de pares etiqueta-valor, encerrada entre llaves \texttt{\{\}}. Es la forma de representar un único elemento (\textbf{objeto}) con varias propiedades.
+\begin{itemize}
+    \item Las \textbf{etiquetas} (o \textbf{claves}) siempre deben ser \textbf{texto entre comillas dobles}.
+    \item Cada etiqueta va seguida de dos puntos \texttt{:}.
+    \item Los diferentes pares etiqueta-valor que describen al objeto se separan por comas \texttt{,}.
+\end{itemize}
+
+Ejemplo 1:
+\begin{lstlisting}[language=json]
+{
+  "nombre": "Teclado Mecánico",
+  "stock": 50,
+  "disponible": true,
+  "fabricante": "Logitech"
+}
+\end{lstlisting}
+
+Ejemplo 2:
+\begin{lstlisting}[language=json]
+{
+  "sensor_id": "TEMP-MOTOR-01A",
+  "timestamp": 1677682800,
+  "valor": 85.5,
+  "unidad": "Celsius",
+  "estado": "Operativo"
+}
+\end{lstlisting}
+
+\subsubsection{Arrays JSON (\texttt{[]})}
+Un \textbf{array} JSON es una \textbf{lista ordenada de valores}, encerrada entre corchetes \texttt{[]}. Es un concepto similar a una lista de Python. Se usa para representar una colección de elementos.
+\begin{lstlisting}[language=json]
+[
+  "Teclado",
+  "Ratón",
+  "Monitor"
+]
+\end{lstlisting}
+
+\subsubsection{Tipos de valores}
+El \textbf{valor} en un par etiqueta-valor puede ser de varios tipos:
+\begin{itemize}
+    \item \textbf{String:} Texto entre comillas dobles (\texttt{"Hola Mundo"}).
+    \item \textbf{Number:} Números enteros o decimales (\texttt{101}, \texttt{-25.5}). JSON no distingue entre enteros y flotantes.
+    \item \textbf{Boolean:} \texttt{true} o \texttt{false} (¡siempre en minúsculas!).
+    \item \textbf{null:} Representa la ausencia de valor: el equivalente a \texttt{None} en Python.
+    \item \textbf{Object:} Un valor puede ser otro objeto JSON (¡así creamos estructuras anidadas!).
+    \item \textbf{Array:} Un valor puede ser un array JSON.
+\end{itemize}
+
+\begin{note}
+\textbf{Importante sobre números en JSON:} El estándar JSON no especifica límites de precisión para los números, pero en la práctica, la mayoría de las implementaciones (incluyendo Python) los tratan como números de punto flotante de doble precisión (64 bits). Esto significa que pueden existir problemas de precisión con números enteros muy grandes (mayores a $2^{53}$) o con muchos decimales. Para aplicaciones críticas que requieren precisión exacta, es recomendable transmitir estos valores como strings.
+\end{note}
+
+\subsubsection*{Ejemplo completo}
+Combinando todo, podemos representar datos muy complejos. Aquí un producto con una lista de etiquetas y un objeto anidado para las dimensiones:
+\begin{lstlisting}[language=json]
+{
+  "id_producto": "TM-001",
+  "nombre": "Teclado Mecánico RGB",
+  "disponible": true,
+  "precio": 89.99,
+  "etiquetas": ["gaming", "oficina", "rgb"],
+  "dimensiones": {
+    "largo_cm": 45,
+    "ancho_cm": 15,
+    "alto_cm": 4
+  },
+  "peso_kg": 0.8,
+  "categoria": "periféricos",
+  "distribuidor": null,
+  "reviews": []
+}
+\end{lstlisting}
+
+\newpage
+Otro ejemplo donde se agrega en un JSON lecturas provenientes de diferentes sensores.
+\begin{lstlisting}[language=json]
+{
+  "machine_id": "BOMBA-REFRIG-Ppal",
+  "location": "Planta 2, Sala de Bombeo",
+  "status": "OPERATIONAL",
+  "last_update": "2023-10-27T11:30:15Z",
+  "operational_hours": 4120.5,
+  "tags": [
+    "mantenimiento-predictivo", "alta-prioridad", "circuito-primario"],
+  "sensor_readings": [
+    {
+      "type": "vibration",
+      "sensor_id": "VIB-MOTOR-3B",
+      "value": 0.15,
+      "unit": "g",
+      "status": "ok"
+    },
+    {
+      "type": "temperature",
+      "sensor_id": "TEMP-MOTOR-3B",
+      "value": 95.2,
+      "unit": "Celsius",
+      "status": "warning"
+    },
+    {
+      "type": "pressure",
+      "sensor_id": "PRES-HIDRAUL-1A",
+      "value": 5.6,
+      "unit": "bar",
+      "status": "ok"
+    },
+    {
+      "type": "flow_rate",
+      "sensor_id": "FLOW-COOLANT-2C",
+      "value": 120.5,
+      "unit": "L/min",
+      "status": "ok"
+    }
+  
+  ],
+  "maintenance_log_ref": null
+}
+\end{lstlisting}
+
+\newpage
+\subsection{Serialización y Codificación: El viaje completo de los datos a la red}
+
+Hemos visto la estructura de JSON como un formato de texto, pero para que un objeto de nuestro programa (como un diccionario de Python) llegue a otro sistema, debe recorrer un camino de \textbf{dos fases} hasta convertirse en los bytes que viajan físicamente por la red. Estos dos pasos son la \textbf{serialización} y la \textbf{codificación}.
+
+\begin{itemize}
+    \item La \textbf{serialización} convierte la estructura de datos nativa del lenguaje en una cadena de texto que sigue un formato estándar (JSON en nuestro caso).
+    \item La \textbf{codificación} convierte esa cadena de texto en una secuencia de bytes que puede ser transmitida por un medio físico.
+\end{itemize}
+
+La regla fundamental de JSON es que esa codificación \textbf{debe ser UTF-8}. Pensemos en UTF-8 como un \emph{diccionario universal} que convierte cada carácter en una secuencia de bytes: los caracteres del alfabeto inglés básico ocupan 1 byte, mientras que caracteres como \texttt{ñ} o \texttt{€} necesitan 2 o 3 bytes.
+
+\subsubsection*{El proceso completo, paso a paso:}
+
+Imaginemos que queremos enviar un objeto diccionario de Python: \texttt{\{'dispositivo': 'Sensor\_T', 'valor': 22.5\}}.
+
+\begin{enumerate}
+    \item \textbf{Paso 1: Serialización (Estructura de Datos $\rightarrow$ String JSON)}\\
+    El primer paso es convertir la estructura de datos del lenguaje de programación en una cadena de texto con formato JSON.
+    \begin{itemize}
+        \item \textbf{Resultado:} La cadena de texto resultante es: \lstinline|{"dispositivo": "Sensor_T", "valor": 22.5}|. Nótese la presencia de las comillas dobles en las etiquetas y cadenas, y la ausencia de comillas en los números.
+    \end{itemize}
+
+    \item \textbf{Paso 2: Codificación (String JSON $\rightarrow$ Bytes)}\\
+    Ahora, el programa toma esa cadena y, usando la \textit{tabla} UTF-8, convierte cada carácter en su byte correspondiente. Un carácter simple del alfabeto inglés, un número o un símbolo común como \texttt{\{} o \texttt{"} casi siempre ocupa 1 byte.
+
+    Veamos nuestro string y su representación en bytes (mostrados como números decimales para que se entienda mejor):
+    \begin{lstlisting}[basicstyle=\ttfamily\small]
+Carácter:  {    "    d    i    s    p    o    s    i    t    i    v    o    "    : (etc.)
+Byte (UTF-8): 123   34  100  105  115  112  111  115  105  116  105  118  111   34   58 ...
+    \end{lstlisting}
+    
+    Esta secuencia de números \lstinline|[123, 34, 100, 105, ...]| es lo que \textbf{realmente se transmite por la red}. No son \textit{letras}, son los bytes que las representan.
+
+    \item \textbf{Paso 3: El Proceso Inverso en el Destino}\\
+    El sistema que recibe los datos realiza exactamente los pasos opuestos:
+    \begin{enumerate}[label*=\alph*.]
+        \item \textbf{Decodificación}: Lee la secuencia de bytes \lstinline|[123, 34, ...]| y, usando la misma tabla UTF-8, la reconstruye en la cadena de texto original.
+        \item \textbf{Deserialización}: Convierte esa cadena de texto de vuelta a una estructura de datos nativa (un diccionario en Python, un objeto en JavaScript, etc.).
+    \end{enumerate}
+\end{enumerate}
+
+\subsubsection*{¿Y qué pasa con las tildes como 'á' o 'ñ'?}
+Aquí es donde brilla UTF-8. Caracteres que no están en el alfabeto inglés básico ocupan \textbf{más de un byte}. Por ejemplo, si nuestro JSON fuera \lstinline|{"acción": "medir"}|:
+\begin{itemize}
+    \item El carácter \lstinline|ó| no se representa con un solo byte, sino con la secuencia de dos bytes: \lstinline|195| y \lstinline|179|.
+\end{itemize}
+Por eso es tan importante que tanto el emisor como el receptor se pongan de acuerdo en usar la misma codificación (UTF-8). Si el receptor intentara decodificar usando otra tabla que no espera secuencias de varios bytes, leería los caracteres \lstinline|ó| y \lstinline|ñ| como basura incomprensible (los típicos \texttt{Ã³} que a veces vemos en páginas web mal configuradas).
+
+\vspace{1em}
+En resumen, el viaje completo de los datos es:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.3cm and 0.1cm, % Distancia vertical Y horizontal
+  every node/.style={align=center} % Para que el texto de varias líneas en las cajas se centre
+]
+  % --- PRIMERA FILA (PROCESO DE ENVÍO) ---
+  \node[box=blue, text width=4cm] (dict1) {Estructura de Datos (ej. \texttt{dict} en Python)};
+  \node[right=of dict1] (arr1) {$\xrightarrow{\text{Serialización}}$};
+  \node[box=blue, right=of arr1, text width=3cm] (str1) {String JSON (\texttt{str} en Python)};
+  \node[right=of str1] (arr2) {$\xrightarrow{\text{Codificación}}$};
+  \node[box=gitred, right=of arr2, text width=2cm] (bytes1) {Secuencia de Bytes};
+
+  % --- SEGUNDA FILA (PROCESO DE RECEPCIÓN) ---
+  \node[box=gitred, text width=2cm, below=2cm of dict1] (bytes2) {Secuencia de Bytes};
+  \node[right=of bytes2] (arr3) {$\xrightarrow{\text{Decodificación}}$};
+  \node[box=blue, right=of arr3, text width=3cm] (str2) {String JSON (\texttt{str} en Python)};
+  \node[right=of str2] (arr4) {$\xrightarrow{\text{Deserialización}}$};
+  \node[box=blue, right=of arr4, text width=4cm] (dict2) {Estructura de Datos (ej. \texttt{dict} en Python)};
+
+  % --- FLECHA DE CONEXIÓN (LA RED) ---
+  \draw[-{Latex[length=3mm]}, very thick] (bytes1.south) -- ++(0,-1.25cm) 
+    node[pos=0.5, right] {[RED]} -| (bytes2.north);
+
+\end{tikzpicture}
+\end{center}
+
+\begin{note}
+\subsubsection*{Una pieza final del puzle: El \emph{envoltorio} del mensaje}
+
+\textit{Llamamos aquí \textbf{mensaje JSON} a la unidad completa que se transmite ---ya sea un objeto \texttt{\{\}}, un array \texttt{[]} o cualquier otro valor JSON válido--- para distinguirla de los objetos anidados que pueden formar parte de su estructura interna.}
+
+Hasta aquí, nos hemos centrado en cómo formatear nuestros datos como una secuencia de bytes lista para ser enviada. Sin embargo, ¿cómo sabe el receptor dónde termina un mensaje JSON y empieza el siguiente?
+
+El formato JSON, por sí mismo, no define cómo se separan los mensajes. Esta responsabilidad recae en el \textbf{protocolo de comunicación} que se utiliza para \emph{envolver} y transportar nuestros datos. Existen varias estrategias comunes:
+
+\begin{itemize}
+    \item \textbf{Delimitadores}: Se añade un carácter especial (como un salto de línea, \texttt{\textbackslash n}) después de cada mensaje JSON. El receptor simplemente lee hasta que encuentra ese delimitador.
+    \item \textbf{Prefijo de longitud}: Antes de cada mensaje JSON, se envía un número (por ejemplo, en 4 bytes) que indica la longitud exacta en bytes del mensaje. El receptor lee primero esa longitud y sabe exactamente cuántos bytes debe leer a continuación.
+    \item \textbf{Protocolos de alto nivel}: La mayoría de las veces, no tenemos que preocuparnos por esto. Tecnologías como \textbf{HTTP}, \textbf{WebSockets} o \textbf{MQTT} se encargan de la delimitación de mensajes por nosotros. Cada petición HTTP o cada mensaje de un WebSocket ya es, por definición, una unidad de datos discreta.
+\end{itemize}
+
+En los próximos temas, cuando exploremos estas tecnologías de comunicación, veremos en la práctica cómo resuelven este problema, completando así el viaje de nuestros datos desde el origen hasta el destino.
+
+\subsubsection*{¿Por qué no usar las propias llaves \texttt{\{\}} como delimitador?}
+
+Puede parecer tentador usar la llave de apertura \texttt{\{} y la de cierre \texttt{\}} del propio JSON para detectar el inicio y el fin de cada mensaje. Sin embargo, esta estrategia tiene problemas fundamentales:
+
+\begin{itemize}
+    \item \textbf{El anidamiento la rompe}: el primer \texttt{\}} que aparece en el flujo de bytes no cierra necesariamente el mensaje completo, sino posiblemente un objeto interno. Para encontrar el \texttt{\}} correcto habría que \emph{contar} cuántas llaves se han abierto y cuántas se han cerrado a lo largo del flujo.
+    \item \textbf{Las cadenas de texto contienen llaves}: un valor de tipo \textit{string} puede contener perfectamente los caracteres \texttt{\{} y \texttt{\}}, por ejemplo \lstinline|{"plantilla": "usa {} aquí"}|. Cualquier contador de llaves los contaría, produciendo resultados incorrectos.
+    \item \textbf{Es un razonamiento circular}: para contar correctamente las llaves ignorando las que están dentro de cadenas, necesitaríamos saber dónde empiezan y terminan esas cadenas. Esto equivale a implementar un \textit{parser} JSON completo. Pero un \textit{parser} solo puede actuar sobre datos cuyo inicio y fin ya conocemos, que es precisamente lo que estábamos intentando resolver.
+\end{itemize}
+
+
+\end{note}
+
+\subsection{El manejo de datos binarios en JSON: Base64}
+Hasta ahora hemos asumido que toda la información que queremos enviar se puede representar fácilmente como texto (números, cadenas, etc.). Pero en los sistemas industriales y de IoT, a menudo necesitamos transmitir datos que, por su naturaleza o por eficiencia, no tienen una representación textual directa. A estos se les llama \textbf{datos binarios}. Algunos ejemplos son:
+
+\begin{itemize}
+    \item Un \textbf{conjunto de datos numéricos} (lecturas de un sensor de vibraciones, coordenadas, etc.) empaquetados en su representación binaria nativa para ahorrar espacio y ancho de banda.
+    \item Una \textbf{firma digital}, que es el resultado de una operación criptográfica.
+    \item Una \textbf{imagen} en miniatura capturada por una cámara de inspección.
+    \item Un archivo de \textbf{configuración o de firmware}.
+\end{itemize}
+
+Estos datos son secuencias de bytes que pueden tomar cualquier valor de 0 a 255. Si intentáramos meter estos bytes directamente en una cadena de texto JSON, nos encontraríamos con un problema grave: muchos de esos valores de bytes corresponden a caracteres de control no imprimibles o a secuencias de bytes que no son válidas en la codificación UTF-8. Esto \textit{rompería} la estructura del JSON, haciéndolo inválido.
+
+Necesitamos una forma de \textbf{codificar} cualquier secuencia de bytes correspondientes a datos binarios a un formato que sea seguro para incluir en un texto. La solución estándar es la codificación \textbf{Base64}.
+
+\subsubsection{La codificación Base64}
+\textbf{Base64} es un algoritmo de codificación (no de encriptación) cuyo único propósito es tomar datos binarios y representarlos usando únicamente un subconjunto de 64 caracteres del alfabeto ASCII que son universalmente seguros y legibles. Estos caracteres son:
+\begin{itemize}
+    \item 26 letras mayúsculas (\texttt{A-Z})
+    \item 26 letras minúsculas (\texttt{a-z})
+    \item 10 números (\texttt{0-9})
+    \item Los símbolos \texttt{+} y \texttt{/}
+\end{itemize}
+El truco de Base64 es ingenioso: como $2^6 = 64$, el algoritmo puede representar cualquier grupo de \textbf{6 bits} de los datos de entrada con uno de estos 64 caracteres. 
+
+El proceso a grandes rasgos es:
+
+\begin{enumerate}
+    \item Tomar la secuencia de bytes de entrada (que son grupos de 8 bits).
+    \item Reorganizarla como un flujo continuo de bits.
+    \item Dividir ese flujo en nuevos grupos de \textbf{6 bits}.
+    \item Asignar a cada grupo de 6 bits el carácter Base64 correspondiente de su tabla.
+\end{enumerate}
+El resultado es una cadena de texto más larga que los datos originales (aproximadamente un 33\% más grande), pero con la garantía de que es texto plano y seguro que se puede incluir sin problemas como un valor de tipo \textit{string} en un JSON.
+
+\paragraph{Ejemplo:}
+Veamos cómo se codifican 3 bytes (los caracteres \emph{Hel} en ASCII):
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+Bytes originales:  [72]       [101]      [108]
+En binario:        01001000   01100101   01101100
+
+Reagrupados en grupos de 6 bits:
+                   010010  000110  010101  101100
+
+Índices Base64:      18      6       21      44
+Caracteres Base64:   S       G       V       s
+\end{lstlisting}
+Resultado: los bytes \texttt{[72, 101, 108]} se codifican como \texttt{"SGVs"}.
+
+\subsubsection*{¿Y si los datos no son un múltiplo de 3 bytes? El Relleno (Padding)}
+El ejemplo anterior funciona perfectamente porque 3 bytes (24 bits) se dividen de forma exacta en cuatro grupos de 6 bits. Pero, ¿qué ocurre cuando el número total de bits de entrada no es múltiplo de 6? Es decir, cuando el último grupo queda incompleto.
+
+El estándar Base64 exige que el flujo de entrada sea tratado como si siempre tuviera una longitud múltiplo de 3 bytes. Para lograrlo, el algoritmo añade un \textbf{relleno} de bits nulos al final de los datos para completar el último bloque de 6 bits, y luego se añaden caracteres \texttt{=} al final de la salida para indicar cuántos bytes "virtuales" se añadieron.
+
+\begin{itemize}
+    \item Si el último grupo tiene \textbf{un solo byte}, la salida terminará con \textbf{\texttt{==}}.
+    \item Si el último grupo tiene \textbf{dos bytes}, la salida terminará con \textbf{\texttt{=}}.
+\end{itemize}
+
+\paragraph{Ejemplo con relleno:}
+Veamos cómo se codifican 2 bytes (los caracteres \emph{He} en ASCII):
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+Bytes originales:    [72]       [101]
+En binario:          01001000   01100101
+
+Bits totales: 16. Para completar los grupos de 6 bits, 
+se añaden dos '0' de relleno al final del flujo de bits:
+                   010010000110010100 <-- Relleno
+
+Reagrupados en grupos de 6 bits:
+                   010010  000110  010100
+          
+Índices Base64:      18      6       20
+Caracteres Base64:   S       G       U
+\end{lstlisting}
+Como los datos originales tenían 2 bytes, necesitamos completar el último grupo de 3 bytes virtualmente. Por lo tanto, añadimos un carácter \texttt{=} al final para indicar que se añadió 1 byte de relleno.
+
+Resultado: los bytes \texttt{[72, 101]} se codifican como \texttt{"SGU="}.
+
+\subsubsection{El proceso inverso: la decodificación desde Base64}
+El sistema receptor realiza el proceso exactamente opuesto. La clave está en entender el rol del carácter de relleno \texttt{=}.
+
+El proceso es:
+
+\begin{enumerate}
+    \item El decodificador lee los caracteres Base64 (ignorando los \texttt{=}) y los convierte de nuevo a sus correspondientes grupos de 6 bits, formando un único flujo de bits.
+    
+    \item El número de caracteres \texttt{=} le indica cuántos bits del final de ese flujo son \textbf{relleno artificial} y deben ser ignorados.
+    \begin{itemize}
+        \item Un \texttt{=} significa que los datos originales tenían 2 bytes, por lo que se deben ignorar los últimos \textbf{2 bits} del flujo.
+        \item Dos \texttt{==} significan que los datos originales tenían 1 byte, por lo que se deben ignorar los últimos \textbf{4 bits} del flujo.
+    \end{itemize}
+    
+    \item Finalmente, el decodificador toma el flujo de bits \emph{limpio} (ya sin el relleno) y lo reorganiza en grupos de 8 bits para reconstruir los bytes originales de forma exacta.
+\end{enumerate}
+
+\newpage
+
+\paragraph{Ejemplo de decodificación con relleno:}
+Tomemos el resultado anterior, \texttt{"SGU="}, y veamos cómo se decodifica:
+
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+Cadena Base64:  S        G        U        =
+Índices:        18       6        20       (señal de 1 byte de relleno)
+
+En binario de 6 bits:
+                010010   000110   010100
+
+Flujo de bits reconstruido (18 bits): 010010000110010100
+
+El '=' nos dice que los datos originales eran de 2 bytes (16 bits).
+Por tanto, leemos solo los primeros 16 bits e ignoramos los 2 finales.
+
+Bits reales: 01001000 01100101
+Bytes (decimal): [72] [101]
+\end{lstlisting}
+
+Resultado: la cadena \texttt{"SGU="} se decodifica de vuelta a los bytes originales \texttt{[72, 101]}.
+
+\subsection{Usando JSON en Python}
+
+Python integra de forma nativa el manejo de JSON a través del módulo \texttt{json}, que proporciona las herramientas esenciales para el ciclo completo de \textbf{serialización} y \textbf{deserialización}. Vamos a ver las dos operaciones fundamentales.
+
+\subsubsection{De texto JSON a Python (Deserialización con \texttt{json.loads()})}
+
+Cuando recibimos datos en formato JSON (por ejemplo, desde una API web o un mensaje MQTT), estos llegan como una cadena de texto (\texttt{str}). Para poder manipularlos de forma nativa en Python, necesitamos deserializarlos o \textit{cargarlos} en memoria. La función \texttt{json.loads()} (load string) se encarga de esto.
+
+\begin{itemize}
+    \item Un \textbf{Objeto JSON \texttt{\{\}}} se convierte en un \textbf{diccionario} Python (\texttt{dict}).
+    \item Un \textbf{Array JSON \texttt{[]}} se convierte en una \textbf{lista} Python (\texttt{list}).
+    \item Los literales \texttt{true}, \texttt{false} y \texttt{null} se convierten en \texttt{True}, \texttt{False} y \texttt{None}.
+\end{itemize}
+
+\begin{lstlisting}[style=PythonStyle, caption={Deserializando un string JSON a un diccionario de Python.}]
+import json
+
+# Imaginemos que este texto nos llega desde una API web
+json_texto = """
+{
+  "id_sensor": "TEMP-MOTOR-01",
+  "ultima_lectura": 22.5,
+  "historial": [22.1, 22.4, 22.5]
+}
+"""
+
+sensor_data = json.loads(json_texto)  # De texto JSON a una estructura Python
+
+# Ahora sensor_data es un diccionario que podemos usar de forma nativa
+print(f"ID del sensor: {sensor_data['id_sensor']}")
+print(f"Última lectura: {sensor_data['ultima_lectura']}")
+print(f"Primera lectura del historial: {sensor_data['historial'][0]}")
+\end{lstlisting}
+
+\subsubsection{De Python a texto JSON (Serialización con \texttt{json.dumps()})}
+
+El proceso inverso es igual de importante: tomar una estructura de datos de Python (un diccionario o una lista) y convertirla en una cadena de texto con formato JSON para poder enviarla por la red o guardarla en un archivo. Para esto se usa la función \texttt{json.dumps()} (dump string).
+
+\begin{lstlisting}[style=PythonStyle, caption={Serializando un diccionario de Python a un string JSON.}]
+import json
+
+# Creamos un diccionario en Python con los datos de una nueva lectura
+nueva_lectura = {
+    "id_sensor": "PRES-CALDERA-02",
+    "valor": 12.5,
+    "timestamp": 1678886400
+}
+
+# Convertimos el diccionario a un string con formato JSON
+# El argumento 'indent=4' es opcional, pero crea un texto formateado
+# y legible para los humanos, muy útil para depuración.
+json_output = json.dumps(nueva_lectura, indent=4)
+
+print(json_output)
+\end{lstlisting}
+
+\begin{note}
+\subsubsection*{Manejando caracteres especiales (tildes, ñ, etc.)}
+Por defecto, \texttt{json.dumps()} convierte cualquier carácter no-ASCII en una secuencia de escape (por ejemplo, \texttt{'ó'} se convierte en \texttt{'\textbackslash u00f3'}). Esto garantiza la compatibilidad, pero hace que el JSON sea menos legible para los humanos si contiene texto en español.
+
+Para evitarlo y generar un JSON en UTF-8 nativo, simplemente añade el argumento \texttt{ensure\_ascii=False}.
+
+\begin{lstlisting}[style=PythonStyle, caption={Comparativa del manejo de caracteres especiales.}]
+import json
+
+datos_es = {"acción": "medición"}
+
+# Comportamiento por defecto (escapa caracteres)
+json_ascii = json.dumps(datos_es)
+print(f"Con ensure_ascii=True (defecto): {json_ascii}")
+# Salida: ensure_ascii=True (defecto): {"acci\u00f3n": "medici\u00f3n"}
+
+# Comportamiento recomendado para español (UTF-8 nativo)
+json_utf8 = json.dumps(datos_es, ensure_ascii=False)
+print(f"Con ensure_ascii=False: {json_utf8}")
+# Salida: ensure_ascii=False: {"acción": "medición"}
+\end{lstlisting}
+Es una buena práctica usar siempre \texttt{ensure\_ascii=False} al trabajar con texto en español para generar un JSON más legible y compacto.
+\end{note}
+
+\newpage
+\subsubsection{Fuentes de datos JSON: archivos y comunicaciones en red}
+
+En la práctica, los datos JSON rara vez están escritos directamente en el código. Sus dos orígenes más comunes son los \textbf{archivos} y los \textbf{mensajes de red}.
+
+\subsubsection*{Lectura desde archivos: el método adecuado para cada tamaño}
+
+Cuando los datos JSON se almacenan en archivos, la estrategia para leerlos depende críticamente del tamaño y la estructura del archivo.
+
+\begin{itemize}
+    \item \textbf{Caso 1: Archivos que caben en memoria (\texttt{json.load()})}\\
+    La función \texttt{json.load()} (sin la 's') deserializa directamente el contenido de un archivo JSON en una estructura Python. El contenido puede ser cualquier valor JSON válido: un único objeto \texttt{\{\}}, un array con miles de elementos, etc. Su limitación fundamental es que \textbf{carga el archivo entero de golpe en memoria}: si el archivo pesa varios gigabytes, colapsaría el sistema. Es la opción ideal cuando el archivo es pequeño y manejable, como archivos de configuración.
+
+    \begin{lstlisting}[style=PythonStyle, caption={Leyendo un archivo de configuración con \texttt{json.load()}}]
+    import json
+    with open('config_planta.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    print(f"Cargada configuración para la planta: {config['planta_id']}")
+    \end{lstlisting}
+
+    \item \textbf{Caso 2: Archivos demasiado grandes para cargar en memoria (Streaming con \texttt{ijson})}\\
+    Si el archivo es un \textbf{único documento JSON} ---es decir, un solo valor raíz, como un enorme array con millones de objetos dentro--- pero demasiado grande para cargarlo de golpe en memoria, necesitamos procesarlo por partes (\textit{streaming}). La biblioteca \texttt{ijson} analiza el archivo de forma incremental, entregando los objetos de uno en uno sin necesidad de tener el archivo entero en memoria.
+
+    \begin{lstlisting}[style=PythonStyle, caption={Procesando un array JSON masivo con \texttt{ijson}}]
+    # Es necesario instalarla: pip install ijson
+    import ijson
+    # Archivo 'log_sensores.json' como un gran array:
+    # [ {"id": "T-01", ...}, {"id": "T-02", ...}, ... ]
+    def procesar_logs_ijson(archivo_log):
+        with open(archivo_log, 'rb') as f: # ijson prefiere abrir en modo binario
+            for lectura in ijson.items(f, 'item'):
+                if lectura['valor'] > lectura['umbral']:
+                    print(f"ALERTA (ijson): Sensor {lectura['id']} superó el umbral.")
+    \end{lstlisting}
+
+    \item \textbf{Caso 3: Logs y flujos de datos (Formato JSON Lines, \texttt{.jsonl})}\\
+    Una alternativa muy popular y eficiente para logs es el formato \textbf{JSON Lines} (\texttt{.jsonl} o \texttt{.ndjson}). En lugar de un gran array, el archivo es simplemente una secuencia de objetos JSON, cada uno en su propia línea, sin comas entre ellos.
+    
+    \textit{Ejemplo de archivo \texttt{log.jsonl}:}
+    \begin{lstlisting}[language=json]
+{"id": "T-01", "valor": 25.1, "umbral": 30.0}
+{"id": "T-02", "valor": 32.4, "umbral": 30.0}
+{"id": "T-03", "valor": 22.8, "umbral": 30.0}
+    \end{lstlisting}
+
+\newpage
+
+    La ventaja de este formato es su extrema simplicidad y robustez: no se necesita ninguna librería especial y se puede procesar de forma óptima leyendo el archivo línea por línea. La extensión \texttt{.jsonl} (o \texttt{.ndjson}) es puramente una \textbf{convención}: Python abre y lee el archivo exactamente igual independientemente de cómo se llame. La extensión solo sirve para que los humanos y las herramientas externas reconozcan el formato a primera vista.
+    
+    \begin{lstlisting}[style=PythonStyle, caption={Procesando un archivo JSON Lines línea por línea.}]
+    import json
+    def procesar_logs_jsonl(archivo_log):
+        with open(archivo_log, 'r', encoding='utf-8') as f:
+            for linea in f:
+                # Cada línea es un string que contiene un objeto JSON completo
+                # Se debe envolver en un try-except por si una línea está corrupta
+                try:
+                    lectura = json.loads(linea)
+                    if lectura['valor'] > lectura['umbral']:
+                        print(f"ALERTA (JSONL): Sensor {lectura['id']} superó el umbral.")
+                except json.JSONDecodeError:
+                    print(f"Error: Línea corrupta: {linea.strip()}")
+    \end{lstlisting}
+\end{itemize}
+
+\subsubsection*{JSON en mensajes de Red (MQTT, WebSockets, APIs)}
+Aunque los archivos son una fuente común, el uso principal de JSON en sistemas modernos es como \textbf{carga útil (\textit{payload})} en mensajes de red. Cuando en temas posteriores estudiemos protocolos como MQTT veremos que el contenido de los mensajes que intercambiamos es, muy a menudo, una cadena de texto JSON.
+
+La herramienta para procesar esos mensajes será siempre la misma: una vez que extraemos la cadena de texto del mensaje, usaremos \texttt{json.loads()} para convertirla en un diccionario de Python y poder trabajar con los datos.
+
+\newpage
+\subsection{Manejando datos binarios en JSON con Python}
+
+Hemos dominado cómo usar JSON para intercambiar datos de texto, pero en el entorno industrial nos enfrentamos a un desafío constante: muchos datos no son texto. Una firma criptográfica, las lecturas de un sensor empaquetadas para máxima eficiencia, o una imagen de una cámara de inspección son, en su forma más pura, \textbf{datos binarios}.
+
+El formato JSON, al ser estrictamente textual, no puede contener estos bytes brutos directamente. Intentarlo corrompería el documento. Abordaremos este problema paso a paso.
+
+\subsubsection{\texttt{str} vs. \texttt{bytes}}
+
+Antes de manejar datos binarios, es crucial entender una distinción fundamental en Python: la diferencia entre los tipos \texttt{str} y \texttt{bytes}.
+
+\begin{itemize}
+    \item \texttt{str} (String): Es el tipo que ya conocemos. Representa \textbf{texto}, una secuencia de caracteres Unicode (letras, números, símbolos, emojis). Su propósito es ser legible para los humanos.
+
+    \item \texttt{bytes}: Este tipo de dato no representa texto, sino una \textbf{secuencia de bytes brutos}. Cada elemento de un objeto \texttt{bytes} es un número entero entre 0 y 255. Este es el formato en el que las máquinas almacenan y transmiten información que no es texto, como imágenes, archivos ZIP o datos criptográficos.
+\end{itemize}
+
+En Python, se distinguen visualmente por el prefijo \texttt{b}:
+\begin{lstlisting}[style=PythonStyle]
+texto_normal = "hola"       # Esto es un str
+datos_binarios = b"hola"    # Esto es un objeto bytes
+\end{lstlisting}
+
+Aunque ambos se impriman de forma parecida si solo contienen caracteres básicos, \textit{internamente} son completamente diferentes:
+
+\begin{lstlisting}[style=PythonStyle]
+print(f"Tipo de texto_normal: {type(texto_normal)}")
+# Salida: Tipo de texto_normal: <class 'str'>
+print(f"Primer caracter: {texto_normal[0]}")
+# Salida: Primer caracter: h
+
+print(f"\nTipo de datos_binarios: {type(datos_binarios)}")
+# Salida: Tipo de datos_binarios: <class 'bytes'>
+print(f"Primer byte (como numero): {datos_binarios[0]}")
+# Salida: Primer byte (como numero): 104
+\end{lstlisting}
+
+Como puedes ver, al acceder a un elemento de un objeto \texttt{bytes}, obtenemos el número que representa a ese byte (104 es el código ASCII para la letra \texttt{'h'}).
+
+\subsubsection*{El puente entre ambos tipos: \texttt{encode()} y \texttt{decode()}}
+Para pasar de texto a bytes y viceversa, usamos los métodos \texttt{.encode()} y \texttt{.decode()}:
+\begin{itemize}
+    \item \texttt{.encode('utf-8')}: Convierte un \texttt{str} en \texttt{bytes} usando la codificación UTF-8.
+    \item \texttt{.decode('utf-8')}: Convierte \texttt{bytes} de vuelta a un \texttt{str} usando la misma codificación.
+\end{itemize}
+
+\begin{lstlisting}[style=PythonStyle]
+# De str a bytes
+texto = "acción"  # Contiene una 'ó' con tilde
+bytes_utf8 = texto.encode('utf-8')
+print(f"'{texto}' como bytes: {bytes_utf8}")
+# Salida: 'acción' como bytes: b'acci\xc3\xb3n'
+
+# De bytes a str
+texto_recuperado = bytes_utf8.decode('utf-8')
+print(f"Bytes recuperados como texto: {texto_recuperado}")
+# Salida: Bytes recuperados como texto: acción
+\end{lstlisting}
+
+Fíjate en la salida \lstinline|b'acci\xc3\xb3n'|. Cuando Python imprime un objeto \texttt{bytes}, muestra los bytes que corresponden a caracteres ASCII directamente (como 'a', 'c', 'c', 'i', 'n') y usa la notación \lstinline|\x..| para los bytes que no son ASCII imprimibles. La secuencia \lstinline|\xc3\xb3| son los dos bytes que representan la letra 'ó' en UTF-8.
+
+
+\subsubsection{Transportando bytes con Base64}
+
+Una vez que tenemos nuestros datos en un objeto \texttt{bytes}, el problema es siempre el mismo: ¿cómo lo metemos dentro de un \textit{string} de JSON? La solución estándar es la codificación \textbf{Base64}, que convierte cualquier secuencia de bytes en una cadena de texto segura.
+
+\subsubsection*{Ejemplo: Datos intrínsecamente binarios (Firma Digital)}
+Este es el escenario más directo. Nuestros datos ya son binarios por naturaleza. El único paso necesario es codificarlos en Base64 para poder incluirlos en el JSON.
+
+\begin{lstlisting}[style=PythonStyle, caption={Ciclo completo para enviar una firma digital en JSON.}]
+import json
+import base64
+
+# --- EMISOR ---
+# 1. La firma ya es un objeto 'bytes'.
+firma_digital = b'\x1a\x3c\x2a\x9c\xe8\x0b\x9f\x1c'
+
+# 2. Codificamos los bytes a un string Base64 compatible con JSON.
+firma_b64_str = base64.b64encode(firma_digital).decode('utf-8')
+
+# 3. Construimos el mensaje en un diccionario de Python.
+mensaje_dict = {"sensor_id": "T-01", "firma_b64": firma_b64_str}
+
+# 4. Serializamos el diccionario a un string con formato JSON.
+json_str = json.dumps(mensaje_dict)
+print(f"Paso 1: Mensaje serializado a string JSON -> {json_str}")
+
+# 5. CODIFICACIÓN FINAL: Convertimos el string completo a bytes para la red.
+json_bytes = json_str.encode('utf-8')
+print(f"Paso 2: String codificado a bytes para la red -> {json_bytes}")
+
+# --- RECEPTOR ---
+print("\n--- PROCESO EN EL RECEPTOR ---")
+# (Simulamos la recepción usando la variable 'json_bytes')
+
+# 1. DECODIFICACIÓN INICIAL: Convertimos los bytes recibidos a un string.
+json_recibido_str = json_bytes.decode('utf-8')
+print(f"Paso 1: Bytes decodificados a string -> {json_recibido_str}")
+
+# 2. Deserializamos el string JSON a un diccionario de Python.
+datos_recibidos = json.loads(json_recibido_str)
+
+# 3. Hacemos el proceso inverso para recuperar los bytes originales de la firma.
+firma_recibida_b64_str = datos_recibidos['firma_b64']
+firma_recuperada = base64.b64decode(firma_recibida_b64_str.encode('utf-8'))
+print(f"Paso 2: Firma recuperada -> {firma_recuperada}")
+
+assert firma_recuperada == firma_digital
+print("\nVerificación completada.")
+\end{lstlisting}
+
+\begin{note}
+\subsubsection*{¿Por qué \texttt{.decode('utf-8')?}}
+Aunque \textit{conceptualmente} Base64 produce caracteres de texto, el módulo \texttt{base64} de Python funciona a un nivel más bajo:
+
+\begin{enumerate}
+    \item La función \texttt{base64.b64encode()} realiza la \textbf{transformación matemática} de los bytes originales a los bytes que corresponden a los caracteres Base64.
+    
+    \item El módulo \texttt{json} de Python, por otro lado, es muy estricto: \textbf{solo acepta objetos de tipo \texttt{str}} para los campos de texto. Si le intentas pasar el objeto \texttt{bytes} del paso anterior, lanzará un error \texttt{TypeError}.
+
+    \item Por lo tanto, el método \texttt{.decode('utf-8')} es el \textbf{puente explícito} que debemos cruzar. Es el paso final donde le decimos a Python que estos bytes corresponden a caracteres.
+\end{enumerate}
+
+El ciclo es siempre:
+\begin{center}
+\texttt{bytes originales} $\xrightarrow{\text{b64encode}}$ \texttt{bytes codificados} $\xrightarrow{\text{decode}}$ \texttt{string listo para JSON}
+\end{center}
+\end{note}
+
+El flujo de trabajo completo es un ciclo simétrico. En el emisor, los datos binarios de la firma digital y los metadatos se ensamblan en una única estructura de Python antes de ser serializados. El receptor realiza el proceso inverso para separar y reconstruir los datos originales.
+
+\begin{figure}[h!]
+\centering
+
+% --- COLUMNA IZQUIERDA: EMISOR ---
+\begin{minipage}{0.49\textwidth}
+\centering
+\textbf{Emisor (Proceso de Envío)}\par\vspace{1em}
+\begin{tikzpicture}[
+  node distance=1.7cm and 0.1cm,
+  every node/.style={align=center}
+]
+  % Nodos del Flujo Principal
+  \node[box=gitred] (start_bytes) {Firma Digital Original \\ (\texttt{bytes})};
+  \node[box=blue, below=of start_bytes] (payload_str) {Payload Base64 \\ (\texttt{str})};
+  \node[box=gitgreen, below=of payload_str] (dict_completo) {Diccionario Python \\ Completo};
+  \node[box=blue, below=of dict_completo] (json_str) {Mensaje Completo JSON \\ (\texttt{str})};
+  \node[box=gitred, below=of json_str] (net_bytes) {Bytes para la Red \\ (\texttt{bytes})};
+
+  % Nodo de Metadatos
+  \node[left=of dict_completo, xshift=-0.5cm] (metadatos) {Metadatos \\ (Python \texttt{dict})};
+
+  % Flechas y Etiquetas
+  \draw[arrow=black] (start_bytes.south) -- (payload_str.north)
+    node[midway, left, text width=6cm] {\small \textbf{Codificación a Texto} \\ \texttt{b64encode().decode()}};
+  
+  % Flechas de Ensamblaje
+  \draw[arrow=black] (payload_str.south) -- (dict_completo.north);
+  \draw[arrow=black] (metadatos.east) -- (dict_completo.west)
+    node[midway, above] {\small \textbf{}};
+  
+  \draw[arrow=black] (dict_completo.south) -- (json_str.north)
+    node[midway, left, text width=6cm] {\small \textbf{Serialización JSON} \\ \texttt{json.dumps()}};
+  \draw[arrow=black] (json_str.south) -- (net_bytes.north)
+    node[midway, left, text width=6cm] {\small \textbf{Codificación a Bytes} \\ \texttt{.encode('utf-8')}};
+
+\end{tikzpicture}
+\end{minipage}
+\hfill % Espacio flexible entre las columnas
+% --- COLUMNA DERECHA: RECEPTOR ---
+\begin{minipage}{0.49\textwidth}
+\centering
+\textbf{Receptor (Proceso de Recepción)}\par\vspace{1em}
+\begin{tikzpicture}[
+  node distance=1.7cm and 0.1cm,
+  every node/.style={align=center}
+]
+  % Nodos
+  \node[box=gitred] (net_bytes) {Bytes de la Red \\ (\texttt{bytes})};
+  \node[box=blue, below=of net_bytes] (json_str) {Mensaje Completo JSON \\ (\texttt{str})};
+  \node[box=gitgreen, below=of json_str] (dict_completo) {Diccionario Python \\ Completo};
+  \node[box=blue, below=of dict_completo] (payload_str) {Payload Base64 \\ (\texttt{str})};
+  \node[box=gitred, below=of payload_str] (end_bytes) {Firma Recuperada \\ (\texttt{bytes})};
+  
+  % Nodo de Metadatos Recuperados
+  \node[right=of dict_completo, xshift=0.5cm] (metadatos) {Metadatos \\ (Python \texttt{dict})};
+  
+  % Flechas y Etiquetas
+  \draw[arrow=black] (net_bytes.south) -- (json_str.north)
+    node[midway, right, text width=5cm] {\small \textbf{Decodificación a Texto} \\ \texttt{.decode('utf-8')}};
+  \draw[arrow=black] (json_str.south) -- (dict_completo.north)
+    node[midway, right, text width=5cm] {\small \textbf{Deserialización JSON} \\ \texttt{json.loads()}};
+    
+  % Flechas de Extracción
+  \draw[arrow=black] (dict_completo.south) -- (payload_str.north);
+  \draw[arrow=black] (dict_completo.east) -- (metadatos.west)
+    node[midway, above] {\small \textbf{}};
+
+  \draw[arrow=black] (payload_str.south) -- (end_bytes.north)
+    node[midway, right, text width=5cm] {\small \textbf{Decodificación a Binario} \\ \texttt{.encode().b64decode()}};
+    
+\end{tikzpicture}
+\end{minipage}
+
+\caption{Transmisión de datos binarios nativos (como una firma digital) en un mensaje JSON.}
+\end{figure}
+
+\subsubsection{Optimizando el \textit{payload}: empaquetado numérico con \texttt{struct}}
+
+¿Pero qué pasa si nuestros datos originales son un objeto en memoria del lenguaje de programación, como una lista de números en Python? Podríamos enviarlos como un array JSON, pero esto es ineficiente. Enviar \lstinline|[25.5, 25.4, 25.5, 25.6, ...]| como texto ocupa muchos más bytes que su representación binaria nativa (4 bytes para cada float).
+
+Si intentamos hacer \texttt{bytes([25.5, ...])}, Python nos dará un error. La función \texttt{bytes()} no sabe cómo interpretar números flotantes ni números mayores de 255.
+
+Necesitamos un mecanismo para \textbf{empaquetar} estos números en una secuencia de bytes siguiendo un formato estándar y eficiente. Esta es la misión del módulo integrado \texttt{struct} de Python. La biblioteca \texttt{struct} actúa como un traductor entre los tipos de datos de Python (enteros, flotantes) y su representación binaria compacta en bytes, similar al empaquetado de datos en el lenguaje C.
+
+\subsubsection*{El Orden de los Bytes (Endianness)}
+Un número que ocupa varios bytes (como un entero de 4 bytes o un float) es una secuencia de bytes en memoria. Pero, ¿en qué orden se guardan? Consideremos el número entero 287.454.020, que en hexadecimal es \texttt{0x11223344}. Este número se compone de cuatro bytes: \texttt{0x11}, \texttt{0x22}, \texttt{0x33} y \texttt{0x44}. Hay dos formas principales de almacenarlos en memoria:
+
+\begin{itemize}
+    \item \textbf{Big-Endian}: El byte más significativo (\textit{big end}) se almacena primero. Es el orden natural para los humanos al leer \arrowkeyright \space \texttt{Memoria: [11] [22] [33] [44]}
+
+    \item \textbf{Little-Endian}: El byte menos significativo (\textit{little end}) se almacena primero. Utilizado por la mayoría de los procesadores modernos (Intel, AMD) \arrowkeyright \space  \texttt{Memoria: [44] [33] [22] [11]}
+\end{itemize}
+
+\paragraph{¿Por qué es esto un problema?}
+El problema surge cuando un sistema \textit{little-endian} (un PC con Windows/Linux) intenta enviar datos binarios a un sistema \textit{big-endian} (como algunos PLCs, microcontroladores antiguos o sistemas embebidos). Si el receptor no sabe en qué orden vienen los bytes, leerá un número completamente diferente. Por ejemplo, nuestro número 287.454.020 sería interpretado como 1.144.201.728. ¡Es como interpretar la fecha 04/05/2023 sin saber si el formato es Día/Mes o Mes/Día!
+
+\paragraph{La solución: \texttt{struct} y el Orden de Red}
+Este problema es tan antiguo como la computación en red. La solución, heredada del lenguaje C (en el que se inspira el módulo \texttt{struct} de Python), es acordar un orden estándar. Para las comunicaciones de red, el estándar es \textbf{big-endian}, también conocido como \textbf{orden de bytes de red (\textit{network byte order})}.
+
+El módulo \texttt{struct} nos permite forzar un orden específico para garantizar que los datos se lean correctamente en cualquier máquina. Los caracteres más importantes son:
+\begin{itemize}
+    \item \texttt{'<'} para \textbf{little-endian}. Se usa para formatos de archivo o sistemas que sabes que usan este orden (la mayoría de los PCs).
+    \item \texttt{'>'} para \textbf{big-endian}.
+    \item \texttt{'!'} para el \textbf{orden de red (\textit{network byte order})}, que por estándar es big-endian.
+\end{itemize}
+Aunque \texttt{'>'} y \texttt{'!'} son funcionalmente idénticos, usar \texttt{'!'} es la \textbf{mejor práctica para datos de red}, ya que declara explícitamente la intención de que esos datos serán transmitidos. Como regla general, siempre debemos especificar uno de estos caracteres para evitar ambigüedades.
+
+
+El flujo con \texttt{struct} es el siguiente:
+\begin{enumerate}
+    \item Definimos un \textbf{código de formato} que describe la estructura, incluyendo el orden de los bytes. Por ejemplo, \texttt{'>f'} significa un float en formato big-endian.
+    \item Usamos la función \texttt{struct.pack()} para tomar nuestros números y empaquetarlos en un objeto \texttt{bytes} siguiendo ese formato.
+\end{enumerate}
+
+
+\newpage
+\subsubsection*{Ejemplo: de colecciones de números a mensaje JSON}
+Usaremos \texttt{struct} para empaquetar los datos y luego \texttt{base64} para hacerlos seguros para JSON.
+
+\begin{lstlisting}[style=PythonStyle, caption={Ciclo completo: de datos Python a bytes de red}]
+import json
+import base64
+import struct
+from datetime import datetime
+# =========================================================================
+# LADO DEL EMISOR (Ej. un sensor en planta)
+# =========================================================================
+print("--- PROCESO EN EL EMISOR ---")
+
+# 1. DATOS CRUDOS Y METADATOS
+# Tenemos una lista de lecturas y la información que les da contexto.
+lecturas_raw = [85.5, 85.7, 85.6, 85.8]
+metadatos = {
+    "sensor_id": "TEMP-MOTOR-01A",
+    "timestamp": datetime.now().isoformat(),
+    "unidad": "Celsius"
+}
+print(f"Paso 1: Datos originales -> {lecturas_raw}")
+
+# 2. EMPAQUETADO BINARIO (EFICIENCIA)
+# Convertimos la lista de números a un objeto 'bytes' compacto.
+# Usamos '!' para el orden de red (big-endian), la mejor práctica.
+formato_struct = '!4d'  # 4 números de punto flotante de doble precisión
+payload_binario = struct.pack(formato_struct, *lecturas_raw)
+print(f"Paso 2: Empaquetado a bytes (eficiente) -> {payload_binario}")
+
+# 3. CODIFICACIÓN BASE64 (COMPATIBILIDAD CON TEXTO)
+# Convertimos los bytes del payload a un string seguro para JSON.
+payload_b64_str = base64.b64encode(payload_binario).decode('utf-8')
+# Mostramos solo los primeros caracteres para legibilidad en la salida; 
+# el payload completo usa la cadena completa.
+print(f"Paso 3: Codificación a Base64 -> '{payload_b64_str[:10]}...'")
+
+# 4. CONSTRUCCIÓN DEL MENSAJE COMPLETO
+# Creamos el diccionario final que une los metadatos y el payload.
+mensaje_dict = {
+    "metadatos": metadatos,
+    "payload_formato": formato_struct,
+    "payload_b64": payload_b64_str
+}
+# 5. SERIALIZACIÓN A JSON (ESTRUCTURA Y LEGIBILIDAD)
+# Convertimos el diccionario a un string con formato JSON.
+# Este string JSON debe codificarse a bytes antes de enviarse por la red.
+mensaje_json_str = json.dumps(mensaje_dict, indent=2)
+print("Paso 4: Serialización a un string JSON (aún en memoria)")
+
+# 6. CODIFICACIÓN FINAL A BYTES (TRANSMISIÓN POR RED)
+# Secuencia de bytes codificada en UTF-8 lista para ser transmitida por red.
+mensaje_bytes_para_red = mensaje_json_str.encode('utf-8')
+print(f"Paso 5: Codificación en bytes -> {mensaje_bytes_para_red[:30]}...")
+print(f"Tamaño del mensaje en red: {len(mensaje_bytes_para_red)} bytes")
+
+
+\end{lstlisting}
+\begin{lstlisting}[style=PythonStyle, caption={Ciclo completo: de bytes de red a datos Python}]
+# =========================================================================
+# LADO DEL RECEPTOR (Ej. un servidor en la nube)
+# =========================================================================
+print("\n--- PROCESO EN EL RECEPTOR ---")
+
+# 1. DECODIFICACIÓN INICIAL DE BYTES A TEXTO
+# El receptor lee los bytes del socket y los decodifica a un string.
+# (Aquí simulamos la recepción usando la variable anterior)
+json_recibido_str = mensaje_bytes_para_red.decode('utf-8')
+print("Paso 1: Bytes de la red decodificados a string JSON")
+
+# 2. DESERIALIZACIÓN DE JSON A DICCIONARIO
+# Ahora que tenemos texto, lo convertimos a una estructura de datos de Python.
+datos_recibidos = json.loads(json_recibido_str)
+print("Paso 2: String JSON deserializado a diccionario de Python")
+
+# 3. EXTRACCIÓN Y DECODIFICACIÓN DEL PAYLOAD
+# Extraemos el payload Base64 (str) y lo decodificamos a sus bytes originales.
+payload_recibido_b64 = datos_recibidos['payload_b64']
+bytes_recuperados = base64.b64decode(payload_recibido_b64.encode('utf-8'))
+print("Paso 3: Payload Base64 recuperado a sus bytes originales")
+
+# 4. DESEMPAQUETADO FINAL
+# Usando el formato recibido en los metadatos, desempaquetamos los bytes.
+formato_recuperado = datos_recibidos['payload_formato']
+
+# ¡Ojo! struct.unpack() siempre devuelve una tupla, no una lista.
+# Si necesitas una lista, conviértela explícitamente con list(), como se muestra en la siguiente línea.
+lecturas_recuperadas = struct.unpack(formato_recuperado, bytes_recuperados)
+print("Paso 4: Bytes desempaquetados a los números flotantes")
+
+# 5. USO DE LOS DATOS
+print("\n=== DATOS FINALES RECUPERADOS Y CONTEXTUALIZADOS ===")
+print(f"Sensor ID: {datos_recibidos['metadatos']['sensor_id']}")
+print(f"Timestamp: {datos_recibidos['metadatos']['timestamp']}")
+print(f"Lecturas: {list(lecturas_recuperadas)}")
+assert list(lecturas_recuperadas) == lecturas_raw
+print("\nVerificación ok: datos transmitidos y recuperados sin pérdida.")
+\end{lstlisting}
+
+\newpage
+El flujo de trabajo completo es un ciclo simétrico. En el emisor, los datos binarios del payload y los metadatos se ensamblan en una única estructura de Python antes de ser serializados. El receptor realiza el proceso inverso para separar y reconstruir los datos originales.
+
+\begin{figure}[h!]
+\centering
+
+
+% --- COLUMNA IZQUIERDA: EMISOR ---
+\begin{minipage}{0.48\textwidth}
+\centering
+\textbf{Emisor (Proceso de Envío)}\par\vspace{1em}
+\begin{tikzpicture}[
+  node distance=1.7cm and 0.1cm,
+  every node/.style={align=center}
+]
+  % Nodos del Flujo Principal
+  \node (numeros) {Datos Numéricos \\ (Python \texttt{list})};
+  \node[box=gitred, below=of numeros] (payload_bytes) {Payload Binario \\ (\texttt{bytes})};
+  \node[box=blue, below=of payload_bytes] (payload_str) {Payload Base64 \\ (\texttt{str})};
+  \node[box=gitgreen, below=of payload_str] (dict_completo) {Diccionario Python \\ Completo};
+  \node[box=blue, below=of dict_completo] (json_str) {Mensaje Completo JSON \\ (\texttt{str})};
+  \node[box=gitred, below=of json_str] (net_bytes) {Bytes para la Red \\ (\texttt{bytes})};
+
+  % Nodo de Metadatos
+  \node[left=of dict_completo, xshift=-0.5cm] (metadatos) {Metadatos \\ (Python \texttt{dict})};
+
+  % Flechas y Etiquetas
+  \draw[arrow=black] (numeros.south) -- (payload_bytes.north)
+    node[midway, left, text width=4cm] {\small \textbf{Empaquetado} \\ \texttt{struct.pack()}};
+  \draw[arrow=black] (payload_bytes.south) -- (payload_str.north)
+    node[midway, left, text width=4cm] {\small \textbf{Codificación a Texto} \\ \texttt{b64encode().decode()}};
+  
+  % Flechas de Ensamblaje
+  \draw[arrow=black] (payload_str.south) -- (dict_completo.north);
+  \draw[arrow=black] (metadatos.east) -- (dict_completo.west)
+    node[midway, above] {\small \textbf{}};
+  
+  \draw[arrow=black] (dict_completo.south) -- (json_str.north)
+    node[midway, left, text width=4cm] {\small \textbf{Serialización JSON} \\ \texttt{json.dumps()}};
+  \draw[arrow=black] (json_str.south) -- (net_bytes.north)
+    node[midway, left, text width=4cm] {\small \textbf{Codificación a Bytes} \\ \texttt{.encode('utf-8')}};
+
+\end{tikzpicture}
+\end{minipage}
+\hfill % Espacio flexible entre las columnas
+% --- COLUMNA DERECHA: RECEPTOR ---
+\begin{minipage}{0.48\textwidth}
+\centering
+\textbf{Receptor (Proceso de Recepción)}\par\vspace{1em}
+\begin{tikzpicture}[
+  node distance=1.7cm and 0.1cm,
+  every node/.style={align=center}
+]
+  % Nodos
+  \node[box=gitred] (net_bytes) {Bytes de la Red \\ (\texttt{bytes})};
+  \node[box=blue, below=of net_bytes] (json_str) {Mensaje Completo JSON \\ (\texttt{str})};
+  \node[box=gitgreen, below=of json_str] (dict_completo) {Diccionario Python \\ Completo};
+  \node[box=blue, below=of dict_completo] (payload_str) {Payload Base64 \\ (\texttt{str})};
+  \node[box=gitred, below=of payload_str] (payload_bytes) {Payload Binario \\ (\texttt{bytes})};
+  \node[below=of payload_bytes] (numeros) {Datos Numéricos \\ (Python \texttt{tuple})};
+  
+  % Nodo de Metadatos Recuperados
+  \node[right=of dict_completo, xshift=0.5cm] (metadatos) {Metadatos \\ (Python \texttt{dict})};
+  
+  % Flechas y Etiquetas
+  \draw[arrow=black] (net_bytes.south) -- (json_str.north)
+    node[midway, right, text width=5cm] {\small \textbf{Decodificación a Texto} \\ \texttt{.decode('utf-8')}};
+  \draw[arrow=black] (json_str.south) -- (dict_completo.north)
+    node[midway, right, text width=5cm] {\small \textbf{Deserialización JSON} \\ \texttt{json.loads()}};
+    
+  % Flechas de Extracción
+  \draw[arrow=black] (dict_completo.south) -- (payload_str.north);
+  \draw[arrow=black] (dict_completo.east) -- (metadatos.west)
+    node[midway, above] {\small \textbf{}};
+
+  \draw[arrow=black] (payload_str.south) -- (payload_bytes.north)
+    node[midway, right, text width=5cm] {\small \textbf{Decodificación a Binario} \\ \texttt{.encode().b64decode()}};
+  \draw[arrow=black] (payload_bytes.south) -- (numeros.north)
+    node[midway, right, text width=5cm] {\small \textbf{Desempaquetado} \\ \texttt{struct.unpack()}};
+    
+\end{tikzpicture}
+\end{minipage}
+\caption{Transmisión de paquetes de números en un mensaje JSON.}
+\end{figure}
+
